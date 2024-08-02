@@ -17,55 +17,7 @@ from hummingbot.strategy_v2.models.executor_actions import CreateExecutorAction,
 class GenericV2StrategyWithCashOutConfig(StrategyV2ConfigBase):
     script_file_name: str = Field(default_factory=lambda: os.path.basename(__file__))
     candles_config: List[CandlesConfig] = []
-    # markets: Dict[str, Set[str]] = {}
     time_to_cash_out: Optional[int] = None
-
-    # source_connector_name: str = Field(
-    #     default="binance_paper_trade",
-    #     client_data=ClientFieldData(
-    #         prompt=lambda e: "Enter the source connector (e.g., binance): ",
-    #         prompt_on_new=True
-    #     ))
-    # source_trading_pair: str = Field(
-    #     default="XRP-USDT",
-    #     client_data=ClientFieldData(
-    #         prompt=lambda e: "Enter the source pair (e.g., XRP-USDT): ",
-    #         prompt_on_new=True
-    #     ))
-    # dest_connector_name: str = Field(
-    #     default="kucoin_paper_trade",
-    #     client_data=ClientFieldData(
-    #         prompt=lambda e: "Enter the dest connector (e.g., Kucoin): ",
-    #         prompt_on_new=True
-    #     ))
-    # dest_trading_pair: str = Field(
-    #     default="XRP-USDT",
-    #     client_data=ClientFieldData(
-    #         prompt=lambda e: "Enter the dest trading pair (e.g., XRP-USDT): ",
-    #         prompt_on_new=True
-    #     ))
-    # position_size_quote: Decimal = Field(
-    #     default=1000,
-    #     client_data=ClientFieldData(
-    #         prompt=lambda e: "Enter the position size in quote currency: ",
-    #         prompt_on_new=True
-    #     ))
-    # min_profitability: Decimal = Field(
-    #     default=0.0001,
-    #     client_data=ClientFieldData(
-    #         prompt=lambda
-    #             e: "Enter the profitability to take profit (including PNL of positions and funding received) ",
-    #         prompt_on_new=True
-    #     ))
-
-    # def update_markets(self, markets: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
-    #     if self.source_connector_name not in markets:
-    #         markets[self.source_connector_name] = set()
-    #     markets[self.source_connector_name].add(self.source_trading_pair)
-    #     if self.dest_connector_name not in markets:
-    #         markets[self.dest_connector_name] = set()
-    #     markets[self.dest_connector_name].add(self.dest_trading_pair)
-    #     return markets
 
 
 class GenericV2StrategyWithCashOut(StrategyV2Base):
@@ -95,15 +47,6 @@ class GenericV2StrategyWithCashOut(StrategyV2Base):
             self.cash_out_time = self.config.time_to_cash_out + time.time()
         else:
             self.cash_out_time = None
-
-        # self.exchange_pair_1 = ConnectorPair(connector_name=config.source_connector_name,
-        #                                      trading_pair=config.source_trading_pair)
-        # self.exchange_pair_2 = ConnectorPair(connector_name=config.dest_connector_name,
-        #                                      trading_pair=config.dest_trading_pair)
-        # self.order_amount = config.position_size_quote
-        # self.min_profitability = config.min_profitability
-        # self.markets = {self.exchange_pair_1.connector_name: {self.exchange_pair_1.trading_pair},
-        #                 self.exchange_pair_2.connector_name: {self.exchange_pair_2.trading_pair}}
 
     def start(self, clock: Clock, timestamp: float) -> None:
         """
