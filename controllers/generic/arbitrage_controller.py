@@ -12,7 +12,7 @@ from hummingbot.data_feed.candles_feed.data_types import CandlesConfig
 from hummingbot.strategy_v2.controllers.controller_base import ControllerBase, ControllerConfigBase
 from hummingbot.strategy_v2.executors.arbitrage_executor.data_types import ArbitrageExecutorConfig
 from hummingbot.strategy_v2.executors.data_types import ConnectorPair
-from hummingbot.strategy_v2.models.executor_actions import CreateExecutorAction, ExecutorAction
+from hummingbot.strategy_v2.models.executor_actions import CreateExecutorAction, ExecutorAction, StopExecutorAction
 
 
 class ArbitrageControllerConfig(ControllerConfigBase):
@@ -26,31 +26,31 @@ class ArbitrageControllerConfig(ControllerConfigBase):
     controllers_config: List[str] = []
 
     source_connector_name: str = Field(
-        default="binance_paper_trade",
+        default="xrpl",
         client_data=ClientFieldData(
-            prompt=lambda e: "Enter the source connector (e.g., binance): ",
+            prompt=lambda e: "Enter the source connector (e.g., xrpl): ",
             prompt_on_new=True
         ))
     source_trading_pair: str = Field(
-        default="XRP-USDT",
+        default="XRP-USD",
         client_data=ClientFieldData(
-            prompt=lambda e: "Enter the source pair (e.g., XRP-USDT): ",
+            prompt=lambda e: "Enter the source pair (e.g., XRP-USD): ",
             prompt_on_new=True
         ))
     dest_connector_name: str = Field(
-        default="kucoin_paper_trade",
+        default="kucoin",
         client_data=ClientFieldData(
             prompt=lambda e: "Enter the dest connector (e.g., Kucoin): ",
             prompt_on_new=True
         ))
     dest_trading_pair: str = Field(
-        default="XRP-USDT",
+        default="XRP-USDC",
         client_data=ClientFieldData(
-            prompt=lambda e: "Enter the dest trading pair (e.g., XRP-USDT): ",
+            prompt=lambda e: "Enter the dest trading pair (e.g., XRP-USDC): ",
             prompt_on_new=True
         ))
     position_size_quote: Decimal = Field(
-        default=100,
+        default=20,
         client_data=ClientFieldData(
             prompt=lambda e: "Enter the position size in quote currency: ",
             prompt_on_new=True
@@ -58,8 +58,33 @@ class ArbitrageControllerConfig(ControllerConfigBase):
     min_profitability: Decimal = Field(
         default=0.001,
         client_data=ClientFieldData(
-            prompt=lambda e: "Enter the profitability to take profit (including PNL of positions and funding received): ",
+            prompt=lambda
+            e: "Enter the profitability to take profit (including PNL of positions and funding received): ",
             prompt_on_new=True
+        ))
+    target_max_executors: Decimal = Field(
+        default=1,
+        client_data=ClientFieldData(
+            prompt=lambda e: "Enter the maximum number of executors to run concurrently: ",
+            prompt_on_new=True
+        ))
+    executor_refresh_time: Decimal = Field(
+        default=20,
+        client_data=ClientFieldData(
+            prompt=lambda e: "Enter the time in seconds to refresh the executor: ",
+            prompt_on_new=True
+        ))
+    connector_name: str = Field(
+        default="xrpl",
+        client_data=ClientFieldData(
+            prompt=lambda e: "dummy variable, to ensure controller variable shows up in Deploy v2",
+            prompt_on_new=False
+        ))
+    trading_pair: str = Field(
+        default="XRP-USD",
+        client_data=ClientFieldData(
+            prompt=lambda e: "dummy variable, to ensure controller variable shows up in Deploy v2",
+            prompt_on_new=False
         ))
 
     @validator("position_size_quote", "min_profitability", pre=True, always=True)
@@ -95,44 +120,71 @@ class ArbitrageController(ControllerBase):
                                                                       pair.trading_pair, PriceType.MidPrice)
         return reference_price
 
-    def determine_executor_actions(self) -> List[ExecutorAction]:
-        executor_actions = []
-        # active_arb_executors = self.filter_executors(
-        #     executors=self.executors_info,
-        #     filter_func=lambda e: not e.is_done and e.config.maker_side == TradeType.BUY
-        # )
-        # stopped_arb_executors = self.filter_executors(
-        #     executors=self.executors_info,
-        #     filter_func=lambda e: e.is_done and e.config.maker_side == TradeType.BUY and e.filled_amount_quote != 0
-        # )
+    def get_executor_config(self) -> ArbitrageExecutorConfig | None:
         price = self.get_market_price(self.source_connector)
         quote_asset_for_buying_exchange = self.market_data_provider.connectors[
             self.source_connector_name].get_available_balance(
             self.source_trading_pair.split("-")[1])
+
         if self.position_size_quote * price > quote_asset_for_buying_exchange:
-            self.logger().info(f"Insufficient balance in exchange {self.source_connector_name} "
-                               f"to buy {self.source_trading_pair.split('-')[1]} "
-                               f"Actual: {quote_asset_for_buying_exchange} --> Needed: {self.position_size_quote * price}")
-            return executor_actions
+            self.logger().error(f"Insufficient balance in exchange {self.source_connector_name} "
+                                f"to buy {self.source_trading_pair.split('-')[1]} "
+                                f"Actual: {quote_asset_for_buying_exchange} --> Needed: {self.position_size_quote * price}")
+            return None
 
         try:
-            config = ArbitrageExecutorConfig(
+            return ArbitrageExecutorConfig(
                 controller_id=self.config.id,
                 timestamp=self.market_data_provider.time(),
-                buying_market=ConnectorPair(connector_name=self.config.source_trading_pair,
-                                            trading_pair=self.config.source_trading_pair),
-                selling_market=ConnectorPair(connector_name=self.config.dest_connector_name,
-                                             trading_pair=self.config.dest_trading_pair),
-                order_amount=self.config.position_size_quote,
-                min_profitability=self.config.min_profitability,
+                buying_market=ConnectorPair(connector_name=self.source_connector_name,
+                                            trading_pair=self.source_trading_pair),
+                selling_market=ConnectorPair(connector_name=self.dest_connector_name,
+                                             trading_pair=self.dest_trading_pair),
+                order_amount=self.position_size_quote,
+                min_profitability=self.min_profitability,
             )
         except Exception as e:
             self.logger().error(f"Error creating arbitrage executor config + {e}")
-            return executor_actions
+            return None
 
-        executor_actions.append(CreateExecutorAction(executor_config=config, controller_id=self.config.id))
+    def create_actions_proposal(self) -> List[ExecutorAction]:
+        executor_actions = []
+
+        if len(self.executors_info) < self.config.target_max_executors:
+            config = self.get_executor_config()
+            if config is not None:
+                executor_actions.append(
+                    CreateExecutorAction(executor_config=self.get_executor_config(), controller_id=self.config.id))
+
         return executor_actions
+
+    def determine_executor_actions(self) -> List[ExecutorAction]:
+        """
+        Determine actions based on the provided executor handler report.
+        """
+        actions = []
+        actions.extend(self.create_actions_proposal())
+        actions.extend(self.stop_actions_proposal())
+        return actions
+
+    def stop_actions_proposal(self) -> List[ExecutorAction]:
+        """
+        Create a list of actions to stop the executors based on order refresh and early stop conditions.
+        """
+        stop_actions = []
+        stop_actions.extend(self.executors_to_refresh())
+        return stop_actions
+
+    def executors_to_refresh(self) -> List[ExecutorAction]:
+        executors_to_refresh = self.filter_executors(
+            executors=self.executors_info,
+            filter_func=lambda
+            x: not x.is_trading and x.is_active and self.market_data_provider.time() - x.timestamp > self.config.executor_refresh_time)
+
+        return [StopExecutorAction(
+            controller_id=self.config.id,
+            executor_id=executor.id) for executor in executors_to_refresh]
 
     def to_format_status(self) -> List[str]:
         all_executors_custom_info = pd.DataFrame(e.custom_info for e in self.executors_info)
-        return [format_df_for_printout(all_executors_custom_info, table_format="psql", )]
+        return [format_df_for_printout(all_executors_custom_info, table_format="psql", max_col_width=20)]

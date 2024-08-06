@@ -28,7 +28,7 @@ class ArbitrageExecutor(ExecutorBase):
 
     @property
     def is_closed(self):
-        return self.arbitrage_status in [ArbitrageExecutorStatus.COMPLETED, ArbitrageExecutorStatus.FAILED]
+        return self.arbitrage_status in [ArbitrageExecutorStatus.COMPLETED, ArbitrageExecutorStatus.FAILED, ArbitrageExecutorStatus.EARLY_STOPPED]
 
     @staticmethod
     def _are_tokens_interchangeable(first_token: str, second_token: str):
@@ -70,6 +70,12 @@ class ArbitrageExecutor(ExecutorBase):
         self._last_tx_cost = Decimal("1")
         self._cumulative_failures = 0
 
+        self.custom_info = {"buying_market": self.buying_market.connector_name,
+                            "buying_pair": self.buying_market.trading_pair,
+                            "selling_market": self.selling_market.connector_name,
+                            "selling_pair": self.selling_market.trading_pair,
+                            "order_amount": self.order_amount}
+
     def validate_sufficient_balance(self):
         # TODO: Implement this method checking balances in the two exchanges
         pass
@@ -87,6 +93,9 @@ class ArbitrageExecutor(ExecutorBase):
             return sell_quote_amount - buy_quote_amount - self.cum_fees_quote
         else:
             return Decimal("0")
+
+    def get_custom_info(self):
+        return self.custom_info
 
     def get_net_pnl_pct(self) -> Decimal:
         if self.arbitrage_status == ArbitrageExecutorStatus.COMPLETED:
@@ -114,7 +123,11 @@ class ArbitrageExecutor(ExecutorBase):
         self._sell_order = value
 
     async def get_resulting_price_for_amount(self, exchange: str, trading_pair: str, is_buy: bool, order_amount: Decimal):
-        return await self.connectors[exchange].get_quote_price(trading_pair, is_buy, order_amount)
+        try:
+            return await self.connectors[exchange].get_order_price(trading_pair, is_buy, order_amount)
+        except Exception as e:
+            self.logger().error(f"Error getting price in exchange {exchange} amount. {e}")
+            return None
 
     async def control_task(self):
         if self.arbitrage_status == ArbitrageExecutorStatus.NOT_STARTED:
@@ -122,7 +135,12 @@ class ArbitrageExecutor(ExecutorBase):
                 trade_pnl_pct = await self.get_trade_pnl_pct()
                 fee_pct = await self.get_tx_cost_pct()
                 profitability = trade_pnl_pct - fee_pct
+
+                self.custom_info["profitability"] = round(profitability, 5)
+                self.custom_info["min_profitability"] = self.min_profitability
+
                 if profitability > self.min_profitability:
+                    self.logger().debug(f"Starting arb executor with profitability: {profitability}")
                     await self.execute_arbitrage()
             except Exception as e:
                 self.logger().error(f"Error calculating profitability: {e}")
@@ -197,6 +215,8 @@ class ArbitrageExecutor(ExecutorBase):
             order_amount=self.order_amount))
 
         buy_price, sell_price = await asyncio.gather(buy_price_task, sell_price_task)
+        self.custom_info["buy_price"] = round(buy_price, 5)
+        self.custom_info["sell_price"] = round(sell_price, 5)
         return buy_price, sell_price
 
     async def get_trade_pnl_pct(self):
@@ -204,6 +224,16 @@ class ArbitrageExecutor(ExecutorBase):
         if not self._last_buy_price or not self._last_sell_price:
             raise Exception("Could not get buy and sell prices")
         return (self._last_sell_price - self._last_buy_price) / self._last_buy_price
+
+    async def early_stop(self):
+        if not self.buy_order.is_done:
+            self._strategy.cancel(self.buy_order.order_id, self.buying_market.connector_name, self.buying_market.trading_pair)
+        if not self.sell_order.is_done:
+            self._strategy.cancel(self.buy_order.order_id, self.buying_market.connector_name,
+                                  self.buying_market.trading_pair)
+        if self.arbitrage_status == ArbitrageExecutorStatus.ACTIVE_ARBITRAGE:
+            self.arbitrage_status = ArbitrageExecutorStatus.EARLY_STOPPED
+        self.close_timestamp = self._strategy.current_timestamp
 
     async def get_tx_cost_in_asset(self, exchange: str, trading_pair: str, is_buy: bool, order_amount: Decimal, asset: str):
         connector = self.connectors[exchange]
@@ -233,9 +263,9 @@ class ArbitrageExecutor(ExecutorBase):
     def process_order_created_event(self, _, market, event: Union[BuyOrderCreatedEvent, SellOrderCreatedEvent]):
         if self.buy_order.order_id == event.order_id:
             self.buy_order.order = self.get_in_flight_order(self.buying_market.connector_name, event.order_id)
-            self.logger().info("Buy Order Created")
+            self.logger().debug(f"Buy Order Created. {self.buy_order.order.amount} {self.buy_order.order.trading_pair} {self.buy_order.order.price} ")
         elif self.sell_order.order_id == event.order_id:
-            self.logger().info("Sell Order Created")
+            self.logger().debug(f"Sell Order Created. {self.sell_order.order.amount} {self.sell_order.order.trading_pair} {self.sell_order.order.price}")
             self.sell_order.order = self.get_in_flight_order(self.selling_market.connector_name, event.order_id)
 
     def process_order_failed_event(self, _, market, event: MarketOrderFailureEvent):

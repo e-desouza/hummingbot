@@ -17,4 +17,5 @@ class ArbitrageExecutorStatus(Enum):
     NOT_STARTED = 1
     ACTIVE_ARBITRAGE = 2
     COMPLETED = 3
-    FAILED = 4
+    EARLY_STOPPED = 4
+    FAILED = 5
