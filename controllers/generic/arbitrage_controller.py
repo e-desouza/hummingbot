@@ -68,6 +68,12 @@ class ArbitrageControllerConfig(ControllerConfigBase):
             prompt=lambda e: "Enter the maximum number of executors to run concurrently: ",
             prompt_on_new=True
         ))
+    max_trades: Decimal = Field(
+        default=20,
+        client_data=ClientFieldData(
+            prompt=lambda e: "Enter the maximum number of successful trades to execute before stopping: ",
+            prompt_on_new=True
+        ))
     executor_refresh_time: Decimal = Field(
         default=20,
         client_data=ClientFieldData(
@@ -110,6 +116,8 @@ class ArbitrageController(ControllerBase):
                                             trading_pair=self.dest_trading_pair)
         self.position_size_quote = config.position_size_quote
         self.min_profitability = config.min_profitability
+        self.running_executors = 0
+
         super().__init__(config, *args, **kwargs)
 
     async def update_processed_data(self):
@@ -147,10 +155,17 @@ class ArbitrageController(ControllerBase):
             self.logger().error(f"Error creating arbitrage executor config + {e}")
             return None
 
+    def running_executors_count(self) -> int:
+        running_executors = self.filter_executors(
+            executors=self.executors_info,
+            filter_func=lambda
+            x: not x.is_active)
+        return len(running_executors)
+
     def create_actions_proposal(self) -> List[ExecutorAction]:
         executor_actions = []
 
-        if len(self.executors_info) < self.config.target_max_executors:
+        if self.running_executors_count() < self.config.target_max_executors:
             config = self.get_executor_config()
             if config is not None:
                 executor_actions.append(
