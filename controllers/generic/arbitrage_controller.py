@@ -135,8 +135,8 @@ class ArbitrageController(ControllerBase):
             self.source_trading_pair.split("-")[1])
 
         if self.position_size_quote * price > quote_asset_for_buying_exchange:
-            self.logger().error(f"Insufficient balance in exchange {self.source_connector_name} "
-                                f"to buy {self.source_trading_pair.split('-')[1]} "
+            self.logger().error(f"Insufficient balance for {self.source_trading_pair.split('-')[1]} in exchange {self.source_connector_name} "
+                                f"to buy {self.source_trading_pair.split('-')[0]} "
                                 f"Actual: {quote_asset_for_buying_exchange} --> Needed: {self.position_size_quote * price}")
             return None
 
